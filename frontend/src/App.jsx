@@ -6,6 +6,7 @@ import WarningFeed from './components/WarningFeed'
 import AssetDetail from './components/AssetDetail'
 import Predictor from './components/Predictor'
 import Chatbot from './components/Chatbot'
+import LocationSearch from './components/LocationSearch'
 
 const API = 'http://localhost:5000/api'
 
@@ -16,6 +17,7 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [userLocation, setUserLocation] = useState(null)
   const [locationName, setLocationName] = useState('Detecting location…')
+  const [mapKey, setMapKey] = useState(0) // force map re-render on location change
 
   // Reverse geocode to get city name from coordinates
   const reverseGeocode = useCallback(async (lat, lng) => {
@@ -49,6 +51,16 @@ export default function App() {
     setLoading(false)
   }, [])
 
+  // Navigate to a new location — called from LocationSearch
+  const navigateToLocation = useCallback((lat, lng) => {
+    setSelected(null)
+    setUserLocation([lat, lng])
+    setMapKey(k => k + 1) // force map to re-center
+    reverseGeocode(lat, lng)
+    fetchData(lat, lng)
+  }, [reverseGeocode, fetchData])
+
+  // Initial geolocation on mount
   useEffect(() => {
     if (!navigator.geolocation) {
       setLocationName('Location unavailable')
@@ -95,16 +107,18 @@ export default function App() {
           <div className="logo-icon">⬡</div>
           InfraWatch
         </div>
-        <div className="header-status">
-          <div className="pulse-dot" />
-          <span>Live Monitoring — {locationName}</span>
-        </div>
+        <LocationSearch
+          currentLocation={userLocation}
+          locationName={locationName}
+          onLocationChange={navigateToLocation}
+        />
       </header>
 
       <StatsBar counts={counts} />
 
       <div className="main-layout">
         <MapView
+          key={mapKey}
           assets={assets}
           onSelect={setSelected}
           selected={selected}
