@@ -29,19 +29,20 @@ except ImportError:
     AI_AVAILABLE = False
     print("⚠ google-generativeai not installed — chatbot disabled")
 
-SYSTEM_PROMPT = """You are InfraWatch AI, a highly advanced, expert assistant for urban infrastructure monitoring.
+SYSTEM_PROMPT = """You are InfraWatch AI, a highly advanced conversational AI (similar to ChatGPT) tailored for urban infrastructure.
 You have access to real-time data about infrastructure assets like bridges, roads, and pipelines.
+
 Your primary goals are to:
-1. Provide accurate, data-driven explanations of risk assessments and Remaining Useful Life (RUL) estimates.
-2. Recommend immediate maintenance priorities for critical assets.
-3. Be highly interactive, conversational, and user-friendly. Ask follow-up questions to clarify the user's needs when appropriate.
-4. If an asset is in 'critical' condition, emphasize the urgency and suggest immediate inspection.
+1. Be highly conversational and friendly. Reply to all greetings (like 'hi', 'hello', 'how are you') naturally.
+2. Answer ANY questions the user asks. If they ask about general infrastructure problems, civil engineering, or even off-topic subjects, answer them intelligently!
+3. Provide accurate explanations of risk assessments and Remaining Useful Life (RUL) estimates.
+4. Recommend immediate maintenance priorities for critical assets.
 
 Guidelines:
-- Keep responses concise but highly informative (2-4 sentences unless the user asks for a detailed breakdown).
-- Use plain, professional language suitable for engineers and city planners.
-- Always reference specific assets by their ID and name when discussing them.
-- Format your response nicely using bullet points if listing multiple items.
+- Act like a helpful, intelligent human assistant.
+- Use plain, professional language.
+- Always reference specific assets by their ID and name when discussing the provided data.
+- If the user asks something outside your dataset, use your general knowledge to answer them anyway.
 
 Current infrastructure data:
 {asset_context}
@@ -214,8 +215,8 @@ def chat():
         # Analyze critical assets
         critical = [a for a in assets if compute_risk(a)["status"] == "critical"]
         
-        if "hello" in message_lower or "hi " in message_lower:
-            reply = "Hello! I'm InfraWatch AI (Simulated Mode). I can give you status updates on our infrastructure. What would you like to know?"
+        if "hello" in message_lower or "hi" in message_lower or "hey" in message_lower or "how are you" in message_lower:
+            reply = "Hello there! I'm InfraWatch AI. How can I assist you today? I can help with civil engineering concepts, infrastructure problems, or analyze our current asset data!"
         elif "critical" in message_lower or "risk" in message_lower or "danger" in message_lower:
             if critical:
                 names = ", ".join([f"{c['name']} (ID: {c['id']})" for c in critical])
@@ -229,8 +230,10 @@ def chat():
                 reply = "All assets are relatively stable. Regular scheduled maintenance should be followed."
         elif "status" in message_lower or "how many" in message_lower:
             reply = f"We are monitoring {len(assets)} assets. {len(critical)} are critical, and the rest are stable or on watch."
+        elif "problem" in message_lower or "infrastructure" in message_lower or "failure" in message_lower:
+            reply = "Common infrastructure problems include material fatigue, corrosion, and excessive load. In our system, we predict these failures by looking at age, load factors, and past maintenance records."
         else:
-            reply = "I'm running in simulated mode without an API key, so I can only answer basic questions about critical assets, risks, and maintenance. Please ask about 'critical assets' or 'maintenance'!"
+            reply = f"That's an interesting point about '{message}'. Since I am running in Simulated Mode (without an API key), my knowledge is currently limited to basic infrastructure data. To unlock my full, ChatGPT-like intelligence so I can answer everything, please add a Gemini API Key!"
             
         return jsonify({"response": reply})
 
