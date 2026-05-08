@@ -14,20 +14,20 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-# ── Gemini AI Setup ──
+# ── OpenAI Setup ──
 try:
-    from google import genai
-    api_key = os.environ.get("GEMINI_API_KEY", "")
-    if api_key and api_key != "your_api_key_here":
-        ai_client = genai.Client(api_key=api_key)
-        AI_MODEL = "gemini-2.0-flash"
+    from openai import OpenAI
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if api_key and not api_key.startswith("your_"):
+        ai_client = OpenAI(api_key=api_key)
+        AI_MODEL = "gpt-4o-mini"
         AI_AVAILABLE = True
     else:
         AI_AVAILABLE = False
-        print("⚠ GEMINI_API_KEY not set — chatbot will use fallback mode")
+        print("⚠ OPENAI_API_KEY not set — chatbot disabled")
 except ImportError:
     AI_AVAILABLE = False
-    print("⚠ google-genai not installed — chatbot disabled")
+    print("⚠ openai not installed — chatbot disabled")
 
 SYSTEM_PROMPT = """You are InfraWatch AI, an expert assistant for urban infrastructure monitoring.
 You have access to real-time data about infrastructure assets (bridges, roads, pipelines).
@@ -195,7 +195,7 @@ def build_asset_context():
 
 @app.route("/api/chat", methods=["POST"])
 def chat():
-    """AI chatbot endpoint using Gemini."""
+    """AI chatbot endpoint using OpenAI."""
     data = request.json or {}
     message = data.get("message", "").strip()
     history = data.get("history", [])
@@ -205,27 +205,28 @@ def chat():
 
     if not AI_AVAILABLE:
         return jsonify({
-            "response": "AI chatbot is not configured. Please add your Gemini API key "
-                        "to backend/.env (get one free at https://aistudio.google.com/apikey)"
+            "response": "AI chatbot is not configured. Please add your OpenAI API key "
+                        "to backend/.env"
         })
 
     try:
         context = build_asset_context()
-        system = SYSTEM_PROMPT.format(asset_context=context)
+        system_msg = SYSTEM_PROMPT.format(asset_context=context)
 
-        contents = [
-            {"role": "user", "parts": [{"text": system}]},
-            {"role": "model", "parts": [{"text": "Understood. I'm InfraWatch AI, ready to help with infrastructure monitoring questions. I have access to all 20 assets and their current risk data."}]},
-        ]
-        for h in history[-10:]:  # Keep last 10 messages for context
-            contents.append({"role": h["role"], "parts": [{"text": h["content"]}]})
-        contents.append({"role": "user", "parts": [{"text": message}]})
+        messages = [{"role": "system", "content": system_msg}]
+        for h in history[-10:]:
+            role = "assistant" if h["role"] == "model" else "user"
+            messages.append({"role": role, "content": h["content"]})
+        messages.append({"role": "user", "content": message})
 
-        response = ai_client.models.generate_content(
+        response = ai_client.chat.completions.create(
             model=AI_MODEL,
-            contents=contents,
+            messages=messages,
+            max_tokens=500,
+            temperature=0.7,
         )
-        return jsonify({"response": response.text})
+        reply = response.choices[0].message.content
+        return jsonify({"response": reply})
     except Exception as e:
         print(f"Chat error: {e}")
         return jsonify({"error": str(e)}), 500
