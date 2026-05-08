@@ -16,18 +16,21 @@ CORS(app)
 
 # ── Gemini AI Setup ──
 try:
-    import google.generativeai as genai
+    from google import genai
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if api_key and not api_key.startswith("your_"):
-        genai.configure(api_key=api_key)
-        AI_MODEL = "gemini-1.5-flash"
+        ai_client = genai.Client(api_key=api_key)
+        AI_MODEL = "gemini-2.0-flash"
         AI_AVAILABLE = True
+        print("✅ Gemini AI connected successfully")
     else:
+        ai_client = None
         AI_AVAILABLE = False
-        print("⚠ GEMINI_API_KEY not set — chatbot disabled")
+        print("⚠ GEMINI_API_KEY not set — chatbot in fallback mode")
 except ImportError:
+    ai_client = None
     AI_AVAILABLE = False
-    print("⚠ google-generativeai not installed — chatbot disabled")
+    print("⚠ google-genai not installed — chatbot in fallback mode")
 
 SYSTEM_PROMPT = """You are InfraWatch AI, a highly advanced, expert assistant for urban infrastructure monitoring.
 You have access to real-time data about infrastructure assets like bridges, roads, and pipelines.
@@ -255,27 +258,28 @@ def chat():
         context = build_asset_context()
         system_msg = SYSTEM_PROMPT.format(asset_context=context)
 
-        # Initialize Gemini Model with system instruction
-        model = genai.GenerativeModel(
-            model_name=AI_MODEL,
-            system_instruction=system_msg
-        )
-
-        # Format history for Gemini (roles must be 'user' or 'model')
-        formatted_history = []
+        # Build contents list for Gemini
+        contents = []
         for h in history_data[-10:]:
-            # Frontend uses 'model' and 'user', Gemini uses 'model' and 'user'
             role = "model" if h["role"] == "model" else "user"
-            formatted_history.append({
-                "role": role,
-                "parts": [h["content"]]
-            })
+            contents.append(genai.types.Content(
+                role=role,
+                parts=[genai.types.Part(text=h["content"])]
+            ))
+        contents.append(genai.types.Content(
+            role="user",
+            parts=[genai.types.Part(text=message)]
+        ))
 
-        # Start chat session with history
-        chat_session = model.start_chat(history=formatted_history)
-        
-        # Send new message
-        response = chat_session.send_message(message)
+        response = ai_client.models.generate_content(
+            model=AI_MODEL,
+            contents=contents,
+            config=genai.types.GenerateContentConfig(
+                system_instruction=system_msg,
+                max_output_tokens=500,
+                temperature=0.7,
+            )
+        )
         
         return jsonify({"response": response.text})
     except Exception as e:
