@@ -8,12 +8,32 @@ from flask_cors import CORS
 import json
 import os
 import time
+import base64
+import uuid
 from dotenv import load_dotenv
 
 load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
+
+# ── Supabase Setup ──
+try:
+    from supabase import create_client
+    sb_url = os.environ.get("SUPABASE_URL", "")
+    sb_key = os.environ.get("SUPABASE_KEY", "")
+    if sb_url and sb_key:
+        supabase = create_client(sb_url, sb_key)
+        SUPABASE_AVAILABLE = True
+        print("✅ Supabase connected successfully")
+    else:
+        supabase = None
+        SUPABASE_AVAILABLE = False
+        print("⚠ Supabase not configured — using local JSON fallback")
+except ImportError:
+    supabase = None
+    SUPABASE_AVAILABLE = False
+    print("⚠ supabase not installed — using local JSON fallback")
 
 # ── Gemini AI Setup ──
 GEMINI_MODELS = ["gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-2.0-flash"]
@@ -61,9 +81,53 @@ user_reports = []
 
 
 def load_assets():
-    """Load mock asset data from JSON file."""
+    """Load asset data from Supabase or fall back to local JSON."""
+    if SUPABASE_AVAILABLE:
+        try:
+            result = supabase.table("assets").select("*").execute()
+            assets = []
+            for row in result.data:
+                assets.append({
+                    "id": row["id"],
+                    "name": row["name"],
+                    "type": row["type"],
+                    "lat": row["lat"],
+                    "lng": row["lng"],
+                    "age": row["age"],
+                    "maxAge": row["max_age"],
+                    "load": row["load"],
+                    "inspectionScore": row["inspection_score"],
+                    "lastMaintenance": row["last_maintenance"],
+                    "history": json.loads(row["history"]) if isinstance(row["history"], str) else row.get("history", [])
+                })
+            return assets
+        except Exception as e:
+            print(f"Supabase load error, falling back to JSON: {e}")
+    
+    # Fallback to local JSON
     with open(DATA_PATH, "r") as f:
         return json.load(f)
+
+
+def load_reports():
+    """Load user reports from Supabase or fall back to in-memory list."""
+    if SUPABASE_AVAILABLE:
+        try:
+            result = supabase.table("reports").select("*").order("created_at", desc=True).execute()
+            reports = []
+            for row in result.data:
+                reports.append({
+                    "id": row["report_id"],
+                    "lat": row["lat"],
+                    "lng": row["lng"],
+                    "description": row["description"],
+                    "image": row.get("image_url"),
+                    "timestamp": row["timestamp"]
+                })
+            return reports
+        except Exception as e:
+            print(f"Supabase reports load error: {e}")
+    return user_reports
 
 
 def recenter_assets(assets, user_lat, user_lng):
@@ -378,25 +442,70 @@ def chat():
 
 @app.route("/api/reports", methods=["GET", "POST"])
 def manage_reports():
-    """Handle user-submitted problem reports with images."""
+    """Handle user-submitted problem reports with Supabase storage."""
     if request.method == "POST":
         data = request.json
         if not data or "lat" not in data or "lng" not in data or "description" not in data:
             return jsonify({"error": "Missing required fields"}), 400
         
-        # We expect 'image' to be a base64 data URL
+        image_data = data.get("image", None)
+        image_url = None
+        report_id = f"REP-{uuid.uuid4().hex[:6].upper()}"
+        timestamp_str = data.get("timestamp", "Just now")
+
+        # Upload image to Supabase Storage if available
+        if SUPABASE_AVAILABLE and image_data and image_data.startswith("data:image"):
+            try:
+                # Extract base64 data from data URL
+                header, b64_data = image_data.split(",", 1)
+                ext = "jpg" if "jpeg" in header else "png"
+                file_bytes = base64.b64decode(b64_data)
+                file_name = f"{report_id}.{ext}"
+                
+                supabase.storage.from_("report-images").upload(
+                    file_name,
+                    file_bytes,
+                    {"content-type": f"image/{ext}"}
+                )
+                image_url = supabase.storage.from_("report-images").get_public_url(file_name)
+                print(f"✅ Image uploaded: {file_name}")
+            except Exception as e:
+                print(f"Image upload error: {e}")
+                image_url = image_data  # fallback to base64
+        else:
+            image_url = image_data  # keep base64 if no Supabase
+
         report = {
-            "id": f"REP-{len(user_reports) + 1}",
+            "id": report_id,
             "lat": data["lat"],
             "lng": data["lng"],
             "description": data["description"],
-            "image": data.get("image", None),
-            "timestamp": data.get("timestamp", "Just now")
+            "image": image_url,
+            "timestamp": timestamp_str
         }
-        user_reports.append(report)
+
+        # Save to Supabase
+        if SUPABASE_AVAILABLE:
+            try:
+                supabase.table("reports").insert({
+                    "report_id": report_id,
+                    "lat": data["lat"],
+                    "lng": data["lng"],
+                    "description": data["description"],
+                    "image_url": image_url,
+                    "timestamp": timestamp_str
+                }).execute()
+                print(f"✅ Report {report_id} saved to Supabase")
+            except Exception as e:
+                print(f"Supabase report save error: {e}")
+                user_reports.append(report)  # fallback
+        else:
+            user_reports.append(report)
+
         return jsonify(report), 201
     
-    return jsonify(user_reports)
+    # GET — load from Supabase or memory
+    return jsonify(load_reports())
 
 
 if __name__ == "__main__":
