@@ -7,13 +7,16 @@ import AssetDetail from './components/AssetDetail'
 import Predictor from './components/Predictor'
 import Chatbot from './components/Chatbot'
 import LocationSearch from './components/LocationSearch'
+import ReportModal from './components/ReportModal'
 
 const API = 'http://172.16.6.3:5000/api'
 
 export default function App() {
   const [assets, setAssets] = useState([])
   const [warnings, setWarnings] = useState([])
+  const [reports, setReports] = useState([])
   const [selected, setSelected] = useState(null)
+  const [reportLocation, setReportLocation] = useState(null)
   const [loading, setLoading] = useState(true)
   const [userLocation, setUserLocation] = useState(null)
   const [locationName, setLocationName] = useState('Detecting location…')
@@ -39,12 +42,14 @@ export default function App() {
   const fetchData = useCallback(async (lat, lng) => {
     try {
       const qs = lat != null && lng != null ? `?lat=${lat}&lng=${lng}` : ''
-      const [a, w] = await Promise.all([
+      const [a, w, r] = await Promise.all([
         fetch(`${API}/assets${qs}`).then(r => r.json()),
         fetch(`${API}/warnings${qs}`).then(r => r.json()),
+        fetch(`${API}/reports`).then(r => r.json()),
       ])
       setAssets(a)
       setWarnings(w)
+      setReports(r)
     } catch (err) {
       console.error('API fetch failed:', err)
     }
@@ -120,9 +125,11 @@ export default function App() {
         <MapView
           key={mapKey}
           assets={assets}
+          reports={reports}
           onSelect={setSelected}
           selected={selected}
           userLocation={userLocation}
+          onMapClick={(latlng) => setReportLocation(latlng)}
         />
 
         <div className="right-panel">
@@ -144,7 +151,19 @@ export default function App() {
         </div>
       </div>
 
-      <Chatbot locationName={locationName} selectedAsset={selected} />
+      <Chatbot />
+
+      {reportLocation && (
+        <ReportModal 
+          lat={reportLocation.lat} 
+          lng={reportLocation.lng} 
+          onClose={() => setReportLocation(null)}
+          onSubmitted={(newReport) => {
+            setReports(prev => [...prev, newReport])
+            setReportLocation(null)
+          }}
+        />
+      )}
     </>
   )
 }

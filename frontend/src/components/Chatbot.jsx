@@ -3,7 +3,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 const API = 'http://172.16.6.3:5000/api'
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
 
-export default function Chatbot({ locationName, selectedAsset }) {
+export default function Chatbot() {
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState([
     { role: 'model', content: 'Hello! I\'m InfraWatch AI 🏗️ Ask me about infrastructure risks, maintenance priorities, or any asset in the system. You can also use the mic to speak!' }
@@ -54,12 +54,7 @@ export default function Chatbot({ locationName, selectedAsset }) {
       const res = await fetch(`${API}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          message: msg, 
-          history: history.slice(0, -1),
-          locationName,
-          selectedAsset
-        }),
+        body: JSON.stringify({ message: msg, history: history.slice(0, -1) }),
       })
       const data = await res.json()
       const reply = data.response || data.error || 'Sorry, something went wrong.'

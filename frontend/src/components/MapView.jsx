@@ -1,4 +1,4 @@
-import { MapContainer, TileLayer, CircleMarker, Popup, Circle, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, CircleMarker, Popup, Circle, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useEffect, useRef } from 'react'
@@ -34,7 +34,17 @@ function FitToAssets({ assets, userLocation }) {
   return null
 }
 
-export default function MapView({ assets, onSelect, selected, userLocation }) {
+function MapClickHandler({ onMapClick }) {
+  useMapEvents({
+    click(e) {
+      // Ignore clicks on markers (handled by propagation stopping, or just trigger it anyway)
+      onMapClick({ lat: e.latlng.lat, lng: e.latlng.lng })
+    }
+  })
+  return null
+}
+
+export default function MapView({ assets, reports, onSelect, selected, userLocation, onMapClick }) {
   return (
     <div className="map-container">
       <MapContainer
@@ -113,6 +123,38 @@ export default function MapView({ assets, onSelect, selected, userLocation }) {
             </Popup>
           </CircleMarker>
         ))}
+
+        {/* User Problem Reports */}
+        {reports?.map(report => (
+          <CircleMarker
+            key={report.id}
+            center={[report.lat, report.lng]}
+            radius={8}
+            pathOptions={{
+              color: '#fff',
+              fillColor: '#9333ea', // purple for user reports
+              fillOpacity: 0.9,
+              weight: 2,
+            }}
+          >
+            <Popup>
+              <div className="popup-title">⚠️ User Report</div>
+              <div className="popup-meta" style={{ marginTop: '5px' }}>
+                <p><strong>Desc:</strong> {report.description}</p>
+                <p><strong>Time:</strong> {report.timestamp}</p>
+                {report.image && (
+                  <img 
+                    src={report.image} 
+                    alt="Report" 
+                    style={{ width: '100%', borderRadius: '4px', marginTop: '8px' }} 
+                  />
+                )}
+              </div>
+            </Popup>
+          </CircleMarker>
+        ))}
+
+        <MapClickHandler onMapClick={onMapClick} />
       </MapContainer>
     </div>
   )

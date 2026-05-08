@@ -29,20 +29,19 @@ except ImportError:
     AI_AVAILABLE = False
     print("⚠ google-generativeai not installed — chatbot disabled")
 
-SYSTEM_PROMPT = """You are InfraWatch AI, a highly advanced conversational AI (similar to ChatGPT) tailored for urban infrastructure.
+SYSTEM_PROMPT = """You are InfraWatch AI, a highly advanced, expert assistant for urban infrastructure monitoring.
 You have access to real-time data about infrastructure assets like bridges, roads, and pipelines.
-
 Your primary goals are to:
-1. Be highly conversational and friendly. Reply to all greetings (like 'hi', 'hello', 'how are you') naturally.
-2. Answer ANY questions the user asks. If they ask about general infrastructure problems, civil engineering, or even off-topic subjects, answer them intelligently!
-3. Provide accurate explanations of risk assessments and Remaining Useful Life (RUL) estimates.
-4. Recommend immediate maintenance priorities for critical assets.
+1. Provide accurate, data-driven explanations of risk assessments and Remaining Useful Life (RUL) estimates.
+2. Recommend immediate maintenance priorities for critical assets.
+3. Be highly interactive, conversational, and user-friendly. Ask follow-up questions to clarify the user's needs when appropriate.
+4. If an asset is in 'critical' condition, emphasize the urgency and suggest immediate inspection.
 
 Guidelines:
-- Act like a helpful, intelligent human assistant.
-- Use plain, professional language.
-- Always reference specific assets by their ID and name when discussing the provided data.
-- If the user asks something outside your dataset, use your general knowledge to answer them anyway.
+- Keep responses concise but highly informative (2-4 sentences unless the user asks for a detailed breakdown).
+- Use plain, professional language suitable for engineers and city planners.
+- Always reference specific assets by their ID and name when discussing them.
+- Format your response nicely using bullet points if listing multiple items.
 
 Current infrastructure data:
 {asset_context}
@@ -52,6 +51,9 @@ DATA_PATH = os.path.join(os.path.dirname(__file__), "data", "assets.json")
 
 # Centroid of the original NYC mock data
 NYC_CENTER = {"lat": 40.745, "lng": -73.96}
+
+# In-memory storage for user-generated reports
+user_reports = []
 
 
 def load_assets():
@@ -203,43 +205,41 @@ def chat():
     data = request.json or {}
     message = data.get("message", "").strip()
     history_data = data.get("history", [])
-    location_name = data.get("locationName", "Unknown Location")
-    selected_asset = data.get("selectedAsset", None)
 
     if not message:
         return jsonify({"error": "No message provided"}), 400
 
-
+    if not AI_AVAILABLE:
+        # Fallback heuristic chatbot
+        message_lower = message.lower()
+        assets = load_assets()
+        
+        # Analyze critical assets
+        critical = [a for a in assets if compute_risk(a)["status"] == "critical"]
+        
+        if "hello" in message_lower or "hi " in message_lower:
+            reply = "Hello! I'm InfraWatch AI (Simulated Mode). I can give you status updates on our infrastructure. What would you like to know?"
+        elif "critical" in message_lower or "risk" in message_lower or "danger" in message_lower:
+            if critical:
+                names = ", ".join([f"{c['name']} (ID: {c['id']})" for c in critical])
+                reply = f"Currently, there are {len(critical)} critical assets requiring immediate attention: {names}. They have high load and aging factors."
+            else:
+                reply = "Good news! There are currently no critical assets in the system."
+        elif "maintenance" in message_lower:
+            if critical:
+                reply = f"You should prioritize maintenance for {critical[0]['name']}. It has a high risk score and needs inspection immediately."
+            else:
+                reply = "All assets are relatively stable. Regular scheduled maintenance should be followed."
+        elif "status" in message_lower or "how many" in message_lower:
+            reply = f"We are monitoring {len(assets)} assets. {len(critical)} are critical, and the rest are stable or on watch."
+        else:
+            reply = "I'm running in simulated mode without an API key, so I can only answer basic questions about critical assets, risks, and maintenance. Please ask about 'critical assets' or 'maintenance'!"
+            
+        return jsonify({"response": reply})
 
     try:
         context = build_asset_context()
         system_msg = SYSTEM_PROMPT.format(asset_context=context)
-        
-        # Inject context about the user's current view
-        system_msg += f"\n\nCURRENT USER VIEW:"
-        system_msg += f"\n- The user is currently exploring the area: {location_name}."
-        if selected_asset:
-            system_msg += f"\n- The user has currently clicked on and selected the following asset: {selected_asset['name']} (ID: {selected_asset['id']}, Type: {selected_asset['type']})."
-            system_msg += f" If the user says 'this asset', 'it', or 'this problem', they are referring to this specific asset. Be sure to analyze its specific data."
-        else:
-            system_msg += f"\n- The user has not selected any specific asset. If they ask about infrastructure problems, give them an overview of {location_name}."
-
-        if not AI_AVAILABLE:
-            # Use g4f (GPT4Free) as a fallback if the API key isn't provided
-            from g4f.client import Client
-            client = Client()
-            messages = [{"role": "system", "content": system_msg}]
-            for h in history_data[-10:]:
-                role = "assistant" if h["role"] == "model" else "user"
-                messages.append({"role": role, "content": h["content"]})
-            messages.append({"role": "user", "content": message})
-
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=messages
-            )
-            reply = response.choices[0].message.content
-            return jsonify({"response": reply})
 
         # Initialize Gemini Model with system instruction
         model = genai.GenerativeModel(
@@ -267,6 +267,29 @@ def chat():
     except Exception as e:
         print(f"Chat error: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/reports", methods=["GET", "POST"])
+def manage_reports():
+    """Handle user-submitted problem reports with images."""
+    if request.method == "POST":
+        data = request.json
+        if not data or "lat" not in data or "lng" not in data or "description" not in data:
+            return jsonify({"error": "Missing required fields"}), 400
+        
+        # We expect 'image' to be a base64 data URL
+        report = {
+            "id": f"REP-{len(user_reports) + 1}",
+            "lat": data["lat"],
+            "lng": data["lng"],
+            "description": data["description"],
+            "image": data.get("image", None),
+            "timestamp": data.get("timestamp", "Just now")
+        }
+        user_reports.append(report)
+        return jsonify(report), 201
+    
+    return jsonify(user_reports)
 
 
 if __name__ == "__main__":
