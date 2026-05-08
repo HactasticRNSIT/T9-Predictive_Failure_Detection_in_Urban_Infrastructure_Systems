@@ -184,9 +184,9 @@ def get_warnings():
 
 
 def build_asset_context():
-    """Build a text summary of all assets for AI context."""
+    """Build a text summary of all assets and user reports for AI context."""
     assets = load_assets()
-    lines = []
+    lines = ["INFRASTRUCTURE ASSETS:"]
     for a in assets:
         p = compute_risk(a)
         lines.append(
@@ -196,6 +196,14 @@ def build_asset_context():
             f"status={p['status']}, risk={p['riskScore']}, RUL={p['rulMonths']}mo, "
             f"anomaly={'YES' if p['anomaly'] else 'no'}"
         )
+    
+    if user_reports:
+        lines.append("\nUSER-SUBMITTED PROBLEM REPORTS:")
+        for r in user_reports:
+            lines.append(f"- Report {r['id']} at ({r['lat']}, {r['lng']}): {r['description']} (Time: {r['timestamp']})")
+    else:
+        lines.append("\nNo user reports submitted yet.")
+        
     return "\n".join(lines)
 
 
@@ -218,7 +226,13 @@ def chat():
         critical = [a for a in assets if compute_risk(a)["status"] == "critical"]
         
         if "hello" in message_lower or "hi " in message_lower:
-            reply = "Hello! I'm InfraWatch AI (Simulated Mode). I can give you status updates on our infrastructure. What would you like to know?"
+            reply = "Hello! I'm InfraWatch AI. I can give you status updates on our infrastructure and any user-reported problems. What would you like to know?"
+        elif "report" in message_lower or "problem" in message_lower:
+            if user_reports:
+                reports_str = ", ".join([f"{r['description']} (ID: {r['id']})" for r in user_reports])
+                reply = f"I see {len(user_reports)} user-submitted reports: {reports_str}. Please check their locations on the map for details."
+            else:
+                reply = "There are currently no user-reported problems in the system. You can add one by clicking anywhere on the map!"
         elif "critical" in message_lower or "risk" in message_lower or "danger" in message_lower:
             if critical:
                 names = ", ".join([f"{c['name']} (ID: {c['id']})" for c in critical])
