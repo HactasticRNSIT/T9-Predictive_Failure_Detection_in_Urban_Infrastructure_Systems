@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 
-const API = `${window.location.protocol}//${window.location.hostname}:5000/api`
+const API = '/api'
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
 
 export default function Chatbot() {

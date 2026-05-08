@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import '../index.css'
 
-const API = `${window.location.protocol}//${window.location.hostname}:5000/api`
+const API = '/api'
 
 export default function ReportModal({ lat, lng, onClose, onSubmitted }) {
   const [description, setDescription] = useState('')
