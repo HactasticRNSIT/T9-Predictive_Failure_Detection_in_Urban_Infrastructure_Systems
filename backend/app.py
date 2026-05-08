@@ -7,6 +7,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 import json
 import os
+import time
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -15,22 +16,22 @@ app = Flask(__name__)
 CORS(app)
 
 # ── Gemini AI Setup ──
+GEMINI_MODELS = ["gemini-2.0-flash-lite", "gemini-1.5-flash", "gemini-2.0-flash"]
 try:
     from google import genai
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if api_key and not api_key.startswith("your_"):
         ai_client = genai.Client(api_key=api_key)
-        AI_MODEL = "gemini-2.0-flash"
         AI_AVAILABLE = True
         print("✅ Gemini AI connected successfully")
     else:
         ai_client = None
         AI_AVAILABLE = False
-        print("⚠ GEMINI_API_KEY not set — chatbot in fallback mode")
+        print("⚠ GEMINI_API_KEY not set — chatbot in smart fallback mode")
 except ImportError:
     ai_client = None
     AI_AVAILABLE = False
-    print("⚠ google-genai not installed — chatbot in fallback mode")
+    print("⚠ google-genai not installed — chatbot in smart fallback mode")
 
 SYSTEM_PROMPT = """You are InfraWatch AI, a highly advanced, expert assistant for urban infrastructure monitoring.
 You have access to real-time data about infrastructure assets like bridges, roads, and pipelines.
@@ -210,9 +211,116 @@ def build_asset_context():
     return "\n".join(lines)
 
 
+def smart_fallback(message, assets=None, reports=None):
+    """A comprehensive rule-based chatbot that handles many conversation topics."""
+    if assets is None:
+        assets = load_assets()
+    if reports is None:
+        reports = user_reports
+    
+    msg = message.lower().strip()
+    scored_assets = []
+    for a in assets:
+        p = compute_risk(a)
+        scored_assets.append({**a, **p})
+    
+    critical = [a for a in scored_assets if a["status"] == "critical"]
+    watch = [a for a in scored_assets if a["status"] == "watch"]
+    stable = [a for a in scored_assets if a["status"] == "stable"]
+    bridges = [a for a in scored_assets if a["type"].lower() == "bridge"]
+    roads = [a for a in scored_assets if a["type"].lower() == "road"]
+    pipelines = [a for a in scored_assets if a["type"].lower() == "pipeline"]
+
+    # Greeting
+    if any(w in msg for w in ["hello", "hi ", "hey", "good morning", "good afternoon", "good evening", "greetings"]):
+        return f"Hello! I'm InfraWatch AI 🏗️\n\nI'm monitoring {len(scored_assets)} infrastructure assets in your area. Here's a quick snapshot:\n• 🔴 {len(critical)} Critical\n• 🟡 {len(watch)} Watch\n• 🟢 {len(stable)} Stable\n\nWhat would you like to know? Try asking about critical assets, maintenance, bridges, roads, or user reports!"
+
+    # Thank you
+    if any(w in msg for w in ["thank", "thanks", "appreciated"]):
+        return "You're welcome! Feel free to ask anything else about the infrastructure. I'm here to help! 😊"
+
+    # Who are you / what can you do
+    if any(w in msg for w in ["who are you", "what are you", "what can you do", "help", "capabilities"]):
+        return "I'm InfraWatch AI — your infrastructure monitoring assistant! Here's what I can help with:\n• 🔴 Check critical assets and risks\n• 🛠️ Maintenance recommendations\n• 🌉 Info on bridges, roads, and pipelines\n• 📊 Asset status and RUL estimates\n• ⚠️ User-reported problems\n• 📷 How to report new issues\n\nJust ask!"
+
+    # User reports
+    if any(w in msg for w in ["report", "problem", "issue", "complaint", "user report"]):
+        if "how" in msg or "submit" in msg or "add" in msg or "create" in msg:
+            return "To report a problem:\n1️⃣ Click anywhere on the map where you see the issue\n2️⃣ A form will pop up with your camera\n3️⃣ Capture a photo of the problem\n4️⃣ Add a description and hit Upload\n\nYour report will appear as a purple marker on the map for everyone to see!"
+        if reports:
+            reports_list = "\n".join([f"• {r['description']} (ID: {r['id']}, reported at {r['timestamp']})" for r in reports[-5:]])
+            return f"There are {len(reports)} user-reported problems:\n{reports_list}\n\nClick on the purple markers on the map to see photos and details."
+        return "No problems have been reported yet. You can report one by clicking anywhere on the map!"
+
+    # Critical assets
+    if any(w in msg for w in ["critical", "danger", "urgent", "emergency", "worst", "bad"]):
+        if critical:
+            details = "\n".join([f"• 🔴 {c['name']} (ID: {c['id']}) — Risk: {c['riskScore']:.0%}, RUL: ~{c['rulMonths']} months, Load: {c['load']}%" for c in critical])
+            return f"⚠️ {len(critical)} CRITICAL assets need immediate attention:\n{details}\n\nI recommend scheduling inspections for these assets as soon as possible."
+        return "✅ Great news! No assets are currently in critical condition. All systems are operating within safe parameters."
+
+    # Maintenance
+    if any(w in msg for w in ["maintenance", "maintain", "repair", "fix", "inspect", "inspection"]):
+        priority = sorted(scored_assets, key=lambda x: x["riskScore"], reverse=True)[:3]
+        details = "\n".join([f"• {a['name']} (ID: {a['id']}) — Risk: {a['riskScore']:.0%}, last maintained {a['lastMaintenance']} yrs ago" for a in priority])
+        return f"🛠️ Top 3 maintenance priorities:\n{details}\n\nFocus on assets with the highest risk scores and longest time since last maintenance."
+
+    # Bridges
+    if any(w in msg for w in ["bridge", "bridges"]):
+        if bridges:
+            details = "\n".join([f"• {b['name']} (ID: {b['id']}) — Status: {b['status'].upper()}, Age: {b['age']}/{b['maxAge']} yrs, RUL: ~{b['rulMonths']} mo" for b in bridges])
+            crit_bridges = [b for b in bridges if b["status"] == "critical"]
+            return f"🌉 Bridge Summary ({len(bridges)} total, {len(crit_bridges)} critical):\n{details}"
+        return "No bridges found in the current monitoring area."
+
+    # Roads
+    if any(w in msg for w in ["road", "roads", "highway", "street"]):
+        if roads:
+            details = "\n".join([f"• {r['name']} (ID: {r['id']}) — Status: {r['status'].upper()}, Load: {r['load']}%, RUL: ~{r['rulMonths']} mo" for r in roads])
+            return f"🛣️ Road Summary ({len(roads)} total):\n{details}"
+        return "No roads found in the current monitoring area."
+
+    # Pipelines
+    if any(w in msg for w in ["pipeline", "pipe", "water", "gas", "sewer"]):
+        if pipelines:
+            details = "\n".join([f"• {p['name']} (ID: {p['id']}) — Status: {p['status'].upper()}, Age: {p['age']} yrs, Inspection: {p['inspectionScore']}/100" for p in pipelines])
+            return f"🚧 Pipeline Summary ({len(pipelines)} total):\n{details}"
+        return "No pipelines found in the current monitoring area."
+
+    # Status / overview / summary
+    if any(w in msg for w in ["status", "overview", "summary", "how many", "dashboard", "overall", "total"]):
+        return f"📊 Infrastructure Overview:\n• Total Assets: {len(scored_assets)}\n• 🔴 Critical: {len(critical)}\n• 🟡 Watch: {len(watch)}\n• 🟢 Stable: {len(stable)}\n• 📝 User Reports: {len(reports)}\n\nWould you like details on any specific category?"
+
+    # RUL / remaining useful life
+    if any(w in msg for w in ["rul", "remaining", "life", "lifespan", "how long", "last"]):
+        shortest = sorted(scored_assets, key=lambda x: x["rulMonths"])[:3]
+        details = "\n".join([f"• {a['name']} — ~{a['rulMonths']} months remaining (Risk: {a['riskScore']:.0%})" for a in shortest])
+        return f"⏳ Assets with shortest Remaining Useful Life:\n{details}\n\nThese should be prioritized for inspection and potential replacement."
+
+    # Age
+    if any(w in msg for w in ["old", "oldest", "age", "aging"]):
+        oldest = sorted(scored_assets, key=lambda x: x["age"] / x["maxAge"], reverse=True)[:3]
+        details = "\n".join([f"• {a['name']} — {a['age']} yrs old (max: {a['maxAge']} yrs, {a['age']/a['maxAge']:.0%} of lifespan used)" for a in oldest])
+        return f"📅 Most aged assets:\n{details}"
+
+    # Load
+    if any(w in msg for w in ["load", "stress", "capacity", "overload"]):
+        highest_load = sorted(scored_assets, key=lambda x: x["load"], reverse=True)[:3]
+        details = "\n".join([f"• {a['name']} — Load: {a['load']}%, Status: {a['status'].upper()}" for a in highest_load])
+        return f"⚡ Highest load assets:\n{details}\n\nAssets above 80% load should be monitored closely for structural stress."
+
+    # Specific asset lookup by ID
+    for a in scored_assets:
+        if a["id"].lower() in msg or a["name"].lower() in msg:
+            return f"📝 Asset Detail: {a['name']} (ID: {a['id']})\n• Type: {a['type']}\n• Status: {a['status'].upper()}\n• Age: {a['age']}/{a['maxAge']} years\n• Load: {a['load']}%\n• Inspection Score: {a['inspectionScore']}/100\n• Last Maintenance: {a['lastMaintenance']} yrs ago\n• Risk Score: {a['riskScore']:.0%}\n• RUL: ~{a['rulMonths']} months\n• Anomaly: {'YES ⚠️' if a['anomaly'] else 'No'}"
+
+    # Fallback
+    return f"I can help you with:\n• Asset status & risks — try \"show critical assets\"\n• Maintenance priorities — try \"what needs maintenance?\"\n• Infrastructure types — try \"show bridges\" or \"show roads\"\n• User reports — try \"any reported problems?\"\n• RUL estimates — try \"which assets are near end of life?\"\n• Asset details — try typing an asset name or ID\n\nCurrently monitoring {len(scored_assets)} assets with {len(critical)} in critical condition."
+
+
 @app.route("/api/chat", methods=["POST"])
 def chat():
-    """AI chatbot endpoint using Google Gemini."""
+    """AI chatbot endpoint with Gemini + smart fallback."""
     data = request.json or {}
     message = data.get("message", "").strip()
     history_data = data.get("history", [])
@@ -220,71 +328,52 @@ def chat():
     if not message:
         return jsonify({"error": "No message provided"}), 400
 
-    if not AI_AVAILABLE:
-        # Fallback heuristic chatbot
-        message_lower = message.lower()
-        assets = load_assets()
-        
-        # Analyze critical assets
-        critical = [a for a in assets if compute_risk(a)["status"] == "critical"]
-        
-        if "hello" in message_lower or "hi " in message_lower:
-            reply = "Hello! I'm InfraWatch AI. I can give you status updates on our infrastructure and any user-reported problems. What would you like to know?"
-        elif "report" in message_lower or "problem" in message_lower:
-            if user_reports:
-                reports_str = ", ".join([f"{r['description']} (ID: {r['id']})" for r in user_reports])
-                reply = f"I see {len(user_reports)} user-submitted reports: {reports_str}. Please check their locations on the map for details."
-            else:
-                reply = "There are currently no user-reported problems in the system. You can add one by clicking anywhere on the map!"
-        elif "critical" in message_lower or "risk" in message_lower or "danger" in message_lower:
-            if critical:
-                names = ", ".join([f"{c['name']} (ID: {c['id']})" for c in critical])
-                reply = f"Currently, there are {len(critical)} critical assets requiring immediate attention: {names}. They have high load and aging factors."
-            else:
-                reply = "Good news! There are currently no critical assets in the system."
-        elif "maintenance" in message_lower:
-            if critical:
-                reply = f"You should prioritize maintenance for {critical[0]['name']}. It has a high risk score and needs inspection immediately."
-            else:
-                reply = "All assets are relatively stable. Regular scheduled maintenance should be followed."
-        elif "status" in message_lower or "how many" in message_lower:
-            reply = f"We are monitoring {len(assets)} assets. {len(critical)} are critical, and the rest are stable or on watch."
-        else:
-            reply = "I'm running in simulated mode without an API key, so I can only answer basic questions about critical assets, risks, and maintenance. Please ask about 'critical assets' or 'maintenance'!"
-            
-        return jsonify({"response": reply})
+    # If Gemini is available, try it with multiple models and retry
+    if AI_AVAILABLE:
+        for model_name in GEMINI_MODELS:
+            for attempt in range(2):
+                try:
+                    context = build_asset_context()
+                    system_msg = SYSTEM_PROMPT.format(asset_context=context)
 
-    try:
-        context = build_asset_context()
-        system_msg = SYSTEM_PROMPT.format(asset_context=context)
+                    contents = []
+                    for h in history_data[-10:]:
+                        role = "model" if h["role"] == "model" else "user"
+                        contents.append(genai.types.Content(
+                            role=role,
+                            parts=[genai.types.Part(text=h["content"])]
+                        ))
+                    contents.append(genai.types.Content(
+                        role="user",
+                        parts=[genai.types.Part(text=message)]
+                    ))
 
-        # Build contents list for Gemini
-        contents = []
-        for h in history_data[-10:]:
-            role = "model" if h["role"] == "model" else "user"
-            contents.append(genai.types.Content(
-                role=role,
-                parts=[genai.types.Part(text=h["content"])]
-            ))
-        contents.append(genai.types.Content(
-            role="user",
-            parts=[genai.types.Part(text=message)]
-        ))
-
-        response = ai_client.models.generate_content(
-            model=AI_MODEL,
-            contents=contents,
-            config=genai.types.GenerateContentConfig(
-                system_instruction=system_msg,
-                max_output_tokens=500,
-                temperature=0.7,
-            )
-        )
+                    response = ai_client.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=genai.types.GenerateContentConfig(
+                            system_instruction=system_msg,
+                            max_output_tokens=500,
+                            temperature=0.7,
+                        )
+                    )
+                    
+                    if response.text:
+                        return jsonify({"response": response.text})
+                except Exception as e:
+                    err = str(e)
+                    print(f"Gemini {model_name} attempt {attempt+1} error: {err}")
+                    if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                        time.sleep(2 * (attempt + 1))  # backoff
+                        continue
+                    break  # non-quota error, try next model
         
-        return jsonify({"response": response.text})
-    except Exception as e:
-        print(f"Chat error: {e}")
-        return jsonify({"error": str(e)}), 500
+        # All models failed — use smart fallback
+        print("All Gemini models exhausted, using smart fallback")
+    
+    # Smart fallback chatbot
+    reply = smart_fallback(message)
+    return jsonify({"response": reply})
 
 
 @app.route("/api/reports", methods=["GET", "POST"])
