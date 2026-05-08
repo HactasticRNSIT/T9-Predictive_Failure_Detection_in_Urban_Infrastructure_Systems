@@ -7,62 +7,91 @@ export default function ReportModal({ lat, lng, onClose, onSubmitted }) {
   const [description, setDescription] = useState('')
   const [image, setImage] = useState(null)
   const [submitting, setSubmitting] = useState(false)
+  const [cameraActive, setCameraActive] = useState(false)
   const [cameraError, setCameraError] = useState('')
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const streamRef = useRef(null)
+  const fileInputRef = useRef(null)
 
-  // Start camera on mount
+  // Cleanup camera on unmount
   useEffect(() => {
-    async function startCamera() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment' }
-        })
-        streamRef.current = stream
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream
-        }
-      } catch (err) {
-        setCameraError('Camera access denied or unavailable.')
-      }
-    }
-    startCamera()
-
     return () => {
-      // Stop camera on unmount
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop())
       }
     }
   }, [])
 
-  const capturePhoto = useCallback(() => {
-    if (!videoRef.current || !canvasRef.current) return
-    const video = videoRef.current
-    const canvas = canvasRef.current
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-    const ctx = canvas.getContext('2d')
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-    setImage(canvas.toDataURL('image/jpeg', 0.8))
-    
-    // Stop stream after capture
+  // Start camera
+  const startCamera = useCallback(async () => {
+    setCameraError('')
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } }
+      })
+      streamRef.current = stream
+      setCameraActive(true)
+      // Wait for the video element to render
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+        }
+      }, 100)
+    } catch (err) {
+      setCameraError('Camera not available. Use "Choose File" instead.')
+      setCameraActive(false)
+    }
+  }, [])
+
+  const stopCamera = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop())
       streamRef.current = null
     }
+    setCameraActive(false)
   }, [])
 
-  const retakePhoto = useCallback(() => {
+  const capturePhoto = useCallback(() => {
+    if (!videoRef.current || !canvasRef.current) return
+    const video = videoRef.current
+    const canvas = canvasRef.current
+    canvas.width = video.videoWidth || 640
+    canvas.height = video.videoHeight || 480
+    const ctx = canvas.getContext('2d')
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+    setImage(canvas.toDataURL('image/jpeg', 0.7))
+    stopCamera()
+  }, [stopCamera])
+
+  // Handle file upload from gallery
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      // Resize the image to keep it manageable
+      const img = new Image()
+      img.onload = () => {
+        const canvas = canvasRef.current || document.createElement('canvas')
+        const maxW = 800
+        const scale = Math.min(1, maxW / img.width)
+        canvas.width = img.width * scale
+        canvas.height = img.height * scale
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+        setImage(canvas.toDataURL('image/jpeg', 0.7))
+      }
+      img.src = ev.target.result
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const clearImage = () => {
     setImage(null)
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-      .then(stream => {
-        streamRef.current = stream
-        if (videoRef.current) videoRef.current.srcObject = stream
-      })
-      .catch(() => setCameraError('Camera access denied.'))
-  }, [])
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
 
   const submitReport = async () => {
     if (!description.trim()) return alert('Please enter a description.')
@@ -83,10 +112,11 @@ export default function ReportModal({ lat, lng, onClose, onSubmitted }) {
         const newReport = await res.json()
         onSubmitted(newReport)
       } else {
-        alert('Failed to submit report.')
+        const err = await res.json()
+        alert('Failed: ' + (err.error || 'Unknown error'))
       }
     } catch (e) {
-      alert('Error connecting to server.')
+      alert('Error connecting to server. Is Flask running?')
     }
     setSubmitting(false)
   }
@@ -95,8 +125,8 @@ export default function ReportModal({ lat, lng, onClose, onSubmitted }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>Report a Problem</h2>
-          <button className="close-btn" onClick={onClose}>✕</button>
+          <h2>⚠️ Report a Problem</h2>
+          <button className="close-btn" onClick={() => { stopCamera(); onClose() }}>✕</button>
         </div>
         
         <div className="modal-body">
@@ -104,21 +134,49 @@ export default function ReportModal({ lat, lng, onClose, onSubmitted }) {
             📍 Location: {lat.toFixed(4)}, {lng.toFixed(4)}
           </p>
 
+          {/* Image section */}
           <div className="camera-section">
-            {cameraError ? (
-              <div className="camera-error">{cameraError}</div>
-            ) : image ? (
+            {image ? (
               <div className="image-preview-container">
-                <img src={image} alt="Captured problem" className="image-preview" />
-                <button className="btn secondary" onClick={retakePhoto}>Retake Photo</button>
+                <img src={image} alt="Captured" className="image-preview" />
+                <button className="btn secondary" onClick={clearImage} style={{ marginTop: '8px' }}>
+                  Remove & Retake
+                </button>
               </div>
-            ) : (
+            ) : cameraActive ? (
               <div className="video-container">
                 <video ref={videoRef} autoPlay playsInline muted />
-                <button className="btn primary capture-btn" onClick={capturePhoto}>📸 Capture Photo</button>
+                <button className="btn primary capture-btn" onClick={capturePhoto}>
+                  📸 Capture Photo
+                </button>
+                <button className="btn secondary" onClick={stopCamera} style={{ marginTop: '4px', fontSize: '0.85rem' }}>
+                  Cancel Camera
+                </button>
+              </div>
+            ) : (
+              <div className="upload-options">
+                {cameraError && <p style={{ color: '#ff6b6b', fontSize: '0.85rem', margin: '0 0 10px 0' }}>{cameraError}</p>}
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button className="btn primary" onClick={startCamera} style={{ flex: 1 }}>
+                    📷 Open Camera
+                  </button>
+                  <button className="btn secondary" onClick={() => fileInputRef.current?.click()} style={{ flex: 1 }}>
+                    📁 Choose File
+                  </button>
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handleFileUpload}
+                  style={{ display: 'none' }}
+                />
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginTop: '8px', textAlign: 'center' }}>
+                  Photo is optional — you can submit with just a description
+                </p>
               </div>
             )}
-            {/* Hidden canvas for image extraction */}
             <canvas ref={canvasRef} style={{ display: 'none' }} />
           </div>
 
@@ -134,7 +192,7 @@ export default function ReportModal({ lat, lng, onClose, onSubmitted }) {
             onClick={submitReport}
             disabled={submitting || !description.trim()}
           >
-            {submitting ? 'Submitting...' : 'Upload Report'}
+            {submitting ? 'Submitting...' : '📤 Upload Report'}
           </button>
         </div>
       </div>
