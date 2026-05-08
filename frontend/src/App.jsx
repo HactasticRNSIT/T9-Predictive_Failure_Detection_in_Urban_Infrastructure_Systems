@@ -8,7 +8,7 @@ import Predictor from './components/Predictor'
 import Chatbot from './components/Chatbot'
 import LocationSearch from './components/LocationSearch'
 
-const API = 'http://localhost:5000/api'
+const API = 'http://172.16.6.3:5000/api'
 
 export default function App() {
   const [assets, setAssets] = useState([])
