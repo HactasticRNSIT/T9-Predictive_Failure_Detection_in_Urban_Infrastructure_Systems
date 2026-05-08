@@ -207,9 +207,32 @@ def chat():
         return jsonify({"error": "No message provided"}), 400
 
     if not AI_AVAILABLE:
-        return jsonify({
-            "response": "AI chatbot is not configured. Please get a Gemini API key from Google AI Studio and add it to backend/.env as GEMINI_API_KEY."
-        })
+        # Fallback heuristic chatbot
+        message_lower = message.lower()
+        assets = load_assets()
+        
+        # Analyze critical assets
+        critical = [a for a in assets if compute_risk(a)["status"] == "critical"]
+        
+        if "hello" in message_lower or "hi " in message_lower:
+            reply = "Hello! I'm InfraWatch AI (Simulated Mode). I can give you status updates on our infrastructure. What would you like to know?"
+        elif "critical" in message_lower or "risk" in message_lower or "danger" in message_lower:
+            if critical:
+                names = ", ".join([f"{c['name']} (ID: {c['id']})" for c in critical])
+                reply = f"Currently, there are {len(critical)} critical assets requiring immediate attention: {names}. They have high load and aging factors."
+            else:
+                reply = "Good news! There are currently no critical assets in the system."
+        elif "maintenance" in message_lower:
+            if critical:
+                reply = f"You should prioritize maintenance for {critical[0]['name']}. It has a high risk score and needs inspection immediately."
+            else:
+                reply = "All assets are relatively stable. Regular scheduled maintenance should be followed."
+        elif "status" in message_lower or "how many" in message_lower:
+            reply = f"We are monitoring {len(assets)} assets. {len(critical)} are critical, and the rest are stable or on watch."
+        else:
+            reply = "I'm running in simulated mode without an API key, so I can only answer basic questions about critical assets, risks, and maintenance. Please ask about 'critical assets' or 'maintenance'!"
+            
+        return jsonify({"response": reply})
 
     try:
         context = build_asset_context()
