@@ -209,37 +209,7 @@ def chat():
     if not message:
         return jsonify({"error": "No message provided"}), 400
 
-    if not AI_AVAILABLE:
-        # Fallback heuristic chatbot
-        message_lower = message.lower()
-        assets = load_assets()
-        
-        # Analyze critical assets
-        critical = [a for a in assets if compute_risk(a)["status"] == "critical"]
-        
-        if "hello" in message_lower or "hi" in message_lower or "hey" in message_lower or "how are you" in message_lower:
-            reply = f"Hello there! I'm InfraWatch AI. How can I assist you today? I can help with infrastructure problems in {location_name} or analyze the asset you're looking at!"
-        elif selected_asset and ("this" in message_lower or "selected" in message_lower or "it" in message_lower):
-            reply = f"You are currently looking at {selected_asset['name']} (ID: {selected_asset['id']}) in {location_name}. Its status is {selected_asset.get('status', 'unknown')} with a risk score of {selected_asset.get('riskScore', 'unknown')}."
-        elif "critical" in message_lower or "risk" in message_lower or "danger" in message_lower:
-            if critical:
-                names = ", ".join([f"{c['name']} (ID: {c['id']})" for c in critical])
-                reply = f"Currently, there are {len(critical)} critical assets requiring immediate attention: {names}. They have high load and aging factors."
-            else:
-                reply = "Good news! There are currently no critical assets in the system."
-        elif "maintenance" in message_lower:
-            if critical:
-                reply = f"You should prioritize maintenance for {critical[0]['name']}. It has a high risk score and needs inspection immediately."
-            else:
-                reply = "All assets are relatively stable. Regular scheduled maintenance should be followed."
-        elif "status" in message_lower or "how many" in message_lower:
-            reply = f"We are monitoring {len(assets)} assets. {len(critical)} are critical, and the rest are stable or on watch."
-        elif "problem" in message_lower or "infrastructure" in message_lower or "failure" in message_lower:
-            reply = "Common infrastructure problems include material fatigue, corrosion, and excessive load. In our system, we predict these failures by looking at age, load factors, and past maintenance records."
-        else:
-            reply = f"That's an interesting point about '{message}'. Since I am running in Simulated Mode (without an API key), my knowledge is currently limited to basic infrastructure data. To unlock my full, ChatGPT-like intelligence so I can answer everything, please add a Gemini API Key!"
-            
-        return jsonify({"response": reply})
+
 
     try:
         context = build_asset_context()
@@ -253,6 +223,23 @@ def chat():
             system_msg += f" If the user says 'this asset', 'it', or 'this problem', they are referring to this specific asset. Be sure to analyze its specific data."
         else:
             system_msg += f"\n- The user has not selected any specific asset. If they ask about infrastructure problems, give them an overview of {location_name}."
+
+        if not AI_AVAILABLE:
+            # Use g4f (GPT4Free) as a fallback if the API key isn't provided
+            from g4f.client import Client
+            client = Client()
+            messages = [{"role": "system", "content": system_msg}]
+            for h in history_data[-10:]:
+                role = "assistant" if h["role"] == "model" else "user"
+                messages.append({"role": role, "content": h["content"]})
+            messages.append({"role": "user", "content": message})
+
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages
+            )
+            reply = response.choices[0].message.content
+            return jsonify({"response": reply})
 
         # Initialize Gemini Model with system instruction
         model = genai.GenerativeModel(
