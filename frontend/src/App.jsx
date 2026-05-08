@@ -9,7 +9,7 @@ import Chatbot from './components/Chatbot'
 import LocationSearch from './components/LocationSearch'
 import ReportModal from './components/ReportModal'
 
-const API = 'http://172.16.6.3:5000/api'
+const API = `${window.location.protocol}//${window.location.hostname}:5000/api`
 
 export default function App() {
   const [assets, setAssets] = useState([])

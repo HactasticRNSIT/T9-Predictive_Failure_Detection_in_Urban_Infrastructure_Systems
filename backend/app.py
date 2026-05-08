@@ -509,4 +509,12 @@ def manage_reports():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    # Increase max request size to 16MB for image uploads
+    app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+    
+    # Run with SSL so HTTPS frontend can reach the API
+    try:
+        app.run(debug=True, host="0.0.0.0", port=5000, ssl_context='adhoc')
+    except Exception:
+        print("⚠ Could not start with SSL, falling back to HTTP")
+        app.run(debug=True, host="0.0.0.0", port=5000)
