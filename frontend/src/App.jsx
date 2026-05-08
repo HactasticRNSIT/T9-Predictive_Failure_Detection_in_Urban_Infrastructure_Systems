@@ -144,7 +144,7 @@ export default function App() {
         </div>
       </div>
 
-      <Chatbot />
+      <Chatbot locationName={locationName} selectedAsset={selected} />
     </>
   )
 }

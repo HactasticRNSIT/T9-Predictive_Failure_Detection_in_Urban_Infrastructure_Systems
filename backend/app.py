@@ -203,6 +203,8 @@ def chat():
     data = request.json or {}
     message = data.get("message", "").strip()
     history_data = data.get("history", [])
+    location_name = data.get("locationName", "Unknown Location")
+    selected_asset = data.get("selectedAsset", None)
 
     if not message:
         return jsonify({"error": "No message provided"}), 400
@@ -216,7 +218,9 @@ def chat():
         critical = [a for a in assets if compute_risk(a)["status"] == "critical"]
         
         if "hello" in message_lower or "hi" in message_lower or "hey" in message_lower or "how are you" in message_lower:
-            reply = "Hello there! I'm InfraWatch AI. How can I assist you today? I can help with civil engineering concepts, infrastructure problems, or analyze our current asset data!"
+            reply = f"Hello there! I'm InfraWatch AI. How can I assist you today? I can help with infrastructure problems in {location_name} or analyze the asset you're looking at!"
+        elif selected_asset and ("this" in message_lower or "selected" in message_lower or "it" in message_lower):
+            reply = f"You are currently looking at {selected_asset['name']} (ID: {selected_asset['id']}) in {location_name}. Its status is {selected_asset.get('status', 'unknown')} with a risk score of {selected_asset.get('riskScore', 'unknown')}."
         elif "critical" in message_lower or "risk" in message_lower or "danger" in message_lower:
             if critical:
                 names = ", ".join([f"{c['name']} (ID: {c['id']})" for c in critical])
@@ -240,6 +244,15 @@ def chat():
     try:
         context = build_asset_context()
         system_msg = SYSTEM_PROMPT.format(asset_context=context)
+        
+        # Inject context about the user's current view
+        system_msg += f"\n\nCURRENT USER VIEW:"
+        system_msg += f"\n- The user is currently exploring the area: {location_name}."
+        if selected_asset:
+            system_msg += f"\n- The user has currently clicked on and selected the following asset: {selected_asset['name']} (ID: {selected_asset['id']}, Type: {selected_asset['type']})."
+            system_msg += f" If the user says 'this asset', 'it', or 'this problem', they are referring to this specific asset. Be sure to analyze its specific data."
+        else:
+            system_msg += f"\n- The user has not selected any specific asset. If they ask about infrastructure problems, give them an overview of {location_name}."
 
         # Initialize Gemini Model with system instruction
         model = genai.GenerativeModel(
