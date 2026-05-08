@@ -14,31 +14,34 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-# ── OpenAI Setup ──
+# ── Gemini AI Setup ──
 try:
-    from openai import OpenAI
-    api_key = os.environ.get("OPENAI_API_KEY", "")
+    import google.generativeai as genai
+    api_key = os.environ.get("GEMINI_API_KEY", "")
     if api_key and not api_key.startswith("your_"):
-        ai_client = OpenAI(api_key=api_key)
-        AI_MODEL = "gpt-4o-mini"
+        genai.configure(api_key=api_key)
+        AI_MODEL = "gemini-1.5-flash"
         AI_AVAILABLE = True
     else:
         AI_AVAILABLE = False
-        print("⚠ OPENAI_API_KEY not set — chatbot disabled")
+        print("⚠ GEMINI_API_KEY not set — chatbot disabled")
 except ImportError:
     AI_AVAILABLE = False
-    print("⚠ openai not installed — chatbot disabled")
+    print("⚠ google-generativeai not installed — chatbot disabled")
 
-SYSTEM_PROMPT = """You are InfraWatch AI, an expert assistant for urban infrastructure monitoring.
-You have access to real-time data about infrastructure assets (bridges, roads, pipelines).
-You help engineers and city planners by:
-- Explaining risk assessments and remaining useful life estimates
-- Recommending maintenance priorities
-- Answering questions about infrastructure health, failure modes, and best practices
-- Providing actionable insights based on the data
+SYSTEM_PROMPT = """You are InfraWatch AI, a highly advanced, expert assistant for urban infrastructure monitoring.
+You have access to real-time data about infrastructure assets like bridges, roads, and pipelines.
+Your primary goals are to:
+1. Provide accurate, data-driven explanations of risk assessments and Remaining Useful Life (RUL) estimates.
+2. Recommend immediate maintenance priorities for critical assets.
+3. Be highly interactive, conversational, and user-friendly. Ask follow-up questions to clarify the user's needs when appropriate.
+4. If an asset is in 'critical' condition, emphasize the urgency and suggest immediate inspection.
 
-Keep responses concise (2-4 sentences unless asked for detail). Use plain language.
-When referencing specific assets, mention their ID and name.
+Guidelines:
+- Keep responses concise but highly informative (2-4 sentences unless the user asks for a detailed breakdown).
+- Use plain, professional language suitable for engineers and city planners.
+- Always reference specific assets by their ID and name when discussing them.
+- Format your response nicely using bullet points if listing multiple items.
 
 Current infrastructure data:
 {asset_context}
@@ -195,38 +198,46 @@ def build_asset_context():
 
 @app.route("/api/chat", methods=["POST"])
 def chat():
-    """AI chatbot endpoint using OpenAI."""
+    """AI chatbot endpoint using Google Gemini."""
     data = request.json or {}
     message = data.get("message", "").strip()
-    history = data.get("history", [])
+    history_data = data.get("history", [])
 
     if not message:
         return jsonify({"error": "No message provided"}), 400
 
     if not AI_AVAILABLE:
         return jsonify({
-            "response": "AI chatbot is not configured. Please add your OpenAI API key "
-                        "to backend/.env"
+            "response": "AI chatbot is not configured. Please get a Gemini API key from Google AI Studio and add it to backend/.env as GEMINI_API_KEY."
         })
 
     try:
         context = build_asset_context()
         system_msg = SYSTEM_PROMPT.format(asset_context=context)
 
-        messages = [{"role": "system", "content": system_msg}]
-        for h in history[-10:]:
-            role = "assistant" if h["role"] == "model" else "user"
-            messages.append({"role": role, "content": h["content"]})
-        messages.append({"role": "user", "content": message})
-
-        response = ai_client.chat.completions.create(
-            model=AI_MODEL,
-            messages=messages,
-            max_tokens=500,
-            temperature=0.7,
+        # Initialize Gemini Model with system instruction
+        model = genai.GenerativeModel(
+            model_name=AI_MODEL,
+            system_instruction=system_msg
         )
-        reply = response.choices[0].message.content
-        return jsonify({"response": reply})
+
+        # Format history for Gemini (roles must be 'user' or 'model')
+        formatted_history = []
+        for h in history_data[-10:]:
+            # Frontend uses 'model' and 'user', Gemini uses 'model' and 'user'
+            role = "model" if h["role"] == "model" else "user"
+            formatted_history.append({
+                "role": role,
+                "parts": [h["content"]]
+            })
+
+        # Start chat session with history
+        chat_session = model.start_chat(history=formatted_history)
+        
+        # Send new message
+        response = chat_session.send_message(message)
+        
+        return jsonify({"response": response.text})
     except Exception as e:
         print(f"Chat error: {e}")
         return jsonify({"error": str(e)}), 500
