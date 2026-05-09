@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS reports (
   description TEXT NOT NULL,
   image_url TEXT,
   timestamp TEXT NOT NULL,
+  status TEXT DEFAULT 'pending',
+  resolution JSONB,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -41,6 +43,10 @@ CREATE POLICY "Public read reports" ON reports FOR SELECT USING (true);
 
 -- 5. Allow public insert to reports (users can submit reports)
 CREATE POLICY "Public insert reports" ON reports FOR INSERT WITH CHECK (true);
+
+-- 5b. Allow public update/delete to reports (admin can manage reports)
+CREATE POLICY "Public update reports" ON reports FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY "Public delete reports" ON reports FOR DELETE USING (true);
 
 -- 6. Allow public insert/update to assets (for seeding)
 CREATE POLICY "Public manage assets" ON assets FOR ALL USING (true) WITH CHECK (true);

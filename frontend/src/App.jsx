@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import './index.css'
 import StatsBar from './components/StatsBar'
 import MapView from './components/MapView'
@@ -117,6 +118,7 @@ export default function App() {
           locationName={locationName}
           onLocationChange={navigateToLocation}
         />
+        <Link to="/admin" className="admin-nav-link">🛡️ Admin</Link>
       </header>
 
       <StatsBar counts={counts} />

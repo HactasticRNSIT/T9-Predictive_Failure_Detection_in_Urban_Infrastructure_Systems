@@ -508,7 +508,193 @@ def manage_reports():
     return jsonify(load_reports())
 
 
+# ── Admin API Endpoints ──
+
+@app.route("/api/admin/reports", methods=["GET"])
+def admin_get_reports():
+    """Get all reports with full details for admin panel."""
+    if SUPABASE_AVAILABLE:
+        try:
+            result = supabase.table("reports").select("*").order("created_at", desc=True).execute()
+            reports = []
+            for row in result.data:
+                resolution_data = None
+                if row.get("resolution"):
+                    resolution_data = json.loads(row["resolution"]) if isinstance(row["resolution"], str) else row["resolution"]
+                reports.append({
+                    "id": row["report_id"],
+                    "lat": row["lat"],
+                    "lng": row["lng"],
+                    "description": row["description"],
+                    "image": row.get("image_url"),
+                    "timestamp": row["timestamp"],
+                    "status": row.get("status", "pending"),
+                    "resolution": resolution_data,
+                })
+            return jsonify(reports)
+        except Exception as e:
+            print(f"Admin reports load error: {e}")
+    
+    # Fallback to in-memory
+    enriched = []
+    for r in user_reports:
+        enriched.append({
+            **r,
+            "status": r.get("status", "pending"),
+            "resolution": r.get("resolution", None),
+        })
+    return jsonify(enriched)
+
+
+@app.route("/api/admin/reports/<report_id>", methods=["PATCH"])
+def admin_update_report(report_id):
+    """Update a report (status, description, etc.)."""
+    data = request.json or {}
+    
+    if SUPABASE_AVAILABLE:
+        try:
+            update_fields = {}
+            if "status" in data:
+                update_fields["status"] = data["status"]
+            if "description" in data:
+                update_fields["description"] = data["description"]
+            
+            if update_fields:
+                supabase.table("reports").update(update_fields).eq("report_id", report_id).execute()
+            
+            # Fetch updated report
+            result = supabase.table("reports").select("*").eq("report_id", report_id).execute()
+            if result.data:
+                row = result.data[0]
+                resolution_data = None
+                if row.get("resolution"):
+                    resolution_data = json.loads(row["resolution"]) if isinstance(row["resolution"], str) else row["resolution"]
+                return jsonify({
+                    "id": row["report_id"],
+                    "lat": row["lat"],
+                    "lng": row["lng"],
+                    "description": row["description"],
+                    "image": row.get("image_url"),
+                    "timestamp": row["timestamp"],
+                    "status": row.get("status", "pending"),
+                    "resolution": resolution_data,
+                })
+            return jsonify({"error": "Report not found"}), 404
+        except Exception as e:
+            print(f"Admin update error: {e}")
+            return jsonify({"error": str(e)}), 500
+    
+    # Fallback to in-memory
+    for r in user_reports:
+        if r["id"] == report_id:
+            if "status" in data:
+                r["status"] = data["status"]
+            if "description" in data:
+                r["description"] = data["description"]
+            return jsonify({**r, "status": r.get("status", "pending"), "resolution": r.get("resolution")})
+    return jsonify({"error": "Report not found"}), 404
+
+
+@app.route("/api/admin/reports/<report_id>", methods=["DELETE"])
+def admin_delete_report(report_id):
+    """Delete a report."""
+    if SUPABASE_AVAILABLE:
+        try:
+            supabase.table("reports").delete().eq("report_id", report_id).execute()
+            print(f"🗑️ Report {report_id} deleted from Supabase")
+            return jsonify({"message": "Deleted"}), 200
+        except Exception as e:
+            print(f"Admin delete error: {e}")
+            return jsonify({"error": str(e)}), 500
+    
+    # Fallback
+    global user_reports
+    before = len(user_reports)
+    user_reports = [r for r in user_reports if r["id"] != report_id]
+    if len(user_reports) < before:
+        return jsonify({"message": "Deleted"}), 200
+    return jsonify({"error": "Report not found"}), 404
+
+
+@app.route("/api/admin/reports/<report_id>/resolve", methods=["POST"])
+def admin_resolve_report(report_id):
+    """Confirm resolution with verification photos and form answers."""
+    data = request.json or {}
+    images = data.get("images", [])
+    answers = data.get("answers", {})
+    notes = data.get("notes", "")
+    
+    resolution_data = {
+        "images": [],
+        "answers": answers,
+        "notes": notes,
+        "resolved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    
+    # Upload verification images to Supabase storage
+    if SUPABASE_AVAILABLE:
+        for i, img_data in enumerate(images):
+            if img_data and img_data.startswith("data:image"):
+                try:
+                    header, b64_data = img_data.split(",", 1)
+                    ext = "jpg" if "jpeg" in header else "png"
+                    file_bytes = base64.b64decode(b64_data)
+                    file_name = f"resolve_{report_id}_{i}.{ext}"
+                    
+                    # Try upload (ignore if already exists)
+                    try:
+                        supabase.storage.from_("report-images").upload(
+                            file_name, file_bytes, {"content-type": f"image/{ext}"}
+                        )
+                    except Exception:
+                        supabase.storage.from_("report-images").update(
+                            file_name, file_bytes, {"content-type": f"image/{ext}"}
+                        )
+                    
+                    image_url = supabase.storage.from_("report-images").get_public_url(file_name)
+                    resolution_data["images"].append(image_url)
+                except Exception as e:
+                    print(f"Resolution image upload error: {e}")
+                    resolution_data["images"].append(img_data)
+            else:
+                resolution_data["images"].append(img_data)
+        
+        try:
+            supabase.table("reports").update({
+                "status": "resolved",
+                "resolution": json.dumps(resolution_data),
+            }).eq("report_id", report_id).execute()
+            
+            result = supabase.table("reports").select("*").eq("report_id", report_id).execute()
+            if result.data:
+                row = result.data[0]
+                res_parsed = json.loads(row["resolution"]) if isinstance(row["resolution"], str) else row["resolution"]
+                return jsonify({
+                    "id": row["report_id"],
+                    "lat": row["lat"],
+                    "lng": row["lng"],
+                    "description": row["description"],
+                    "image": row.get("image_url"),
+                    "timestamp": row["timestamp"],
+                    "status": "resolved",
+                    "resolution": res_parsed,
+                })
+        except Exception as e:
+            print(f"Resolution save error: {e}")
+            return jsonify({"error": str(e)}), 500
+    else:
+        resolution_data["images"] = images
+        for r in user_reports:
+            if r["id"] == report_id:
+                r["status"] = "resolved"
+                r["resolution"] = resolution_data
+                return jsonify({**r})
+    
+    return jsonify({"error": "Report not found"}), 404
+
+
 if __name__ == "__main__":
     # Increase max request size to 16MB for image uploads
     app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
     app.run(debug=True, host="0.0.0.0", port=5000)
+
